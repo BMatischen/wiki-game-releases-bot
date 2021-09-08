@@ -1,0 +1,131 @@
+import discord
+from discord.ext import commands
+import os
+import io
+import numpy as np
+import pandas as pd
+import datetime
+
+
+prefix = '!'
+client = commands.Bot(command_prefix = prefix)
+table_url = "http://en.wikipedia.org/wiki/{0}_in_video_games"
+
+def get_year_data(year):
+    df = None
+    url = None
+    try:
+        url = table_url.format(str(year))
+        tables = pd.read_html(url, match='Title')
+        months = []
+        headings = ['Month','Day','Title']
+
+        for df in tables:
+            curr_headings = list(df.columns[:3])
+            if curr_headings == headings:
+                months.append(df)
+
+        df = (pd.concat(months)
+              .replace('TBA',np.NaN)
+              .dropna()
+              )
+        df['Title'] = df['Title'].replace(r"\[.*\]","",regex=True)
+        df['Year'] = pd.Series([year]*len(df['Month']))
+        df['Day'] = df['Day'].astype(int)
+        df['Date'] = df[['Year','Month','Day']].apply(lambda x: '-'.join(x.values.astype(str)), axis='columns')
+        df['Date'] = pd.to_datetime(df['Date'])
+        df.sort_values(by='Date', inplace=True)
+
+    except ValueError as e:
+        raise e
+    return df, url
+
+
+@client.event
+async def on_ready():
+    print("Ready as {0.user}".format(client))
+
+
+@client.command(name='list', help="""
+                    List video game releases for given month and year\n
+                     - Get releases for current month: !list
+                     - Get releases for a different month of year: !list [month]
+                       (e.g. !list january)
+                     - Get releases for different month and year: !list [month] [year]
+                       (e.g. !list august 2020)\n
+                     NB: Can only go back upto 2015 currently""")
+async def list_releases(ctx, month=None, year=None):
+    curr_date = ctx.message.created_at
+    if month == None:
+        curr_month = curr_date.strftime("%B").upper()
+    else:
+        curr_month = month.upper()
+    if year == None:
+        curr_year = curr_date.year
+    else:
+        curr_year = year
+
+    try:
+        releases, wiki_url = get_year_data(curr_year)
+        releases = releases[releases['Month']==curr_month]
+        games = tuple(zip(releases['Day'], releases['Title']))
+        msg = f"{len(games)} games released this month\n\n"
+
+        for day, title in games:
+            row = "{0}  {1}\n".format(day, title)
+            msg += row
+
+        embed = discord.Embed(title='Releases for {0} {1}'.format(curr_month, str(curr_year)),
+                              url=wiki_url, description=msg,
+                              color=0xFF5733)
+        await ctx.send(embed=embed)
+        
+    except ValueError as e:
+        print(e)
+        await ctx.send("Error: Unable to find data!")
+
+
+
+@client.command(name='new', help='Show games released in past 7 days and today')
+async def post_new(ctx):
+    curr_date = ctx.message.created_at
+    last_date = curr_date - datetime.timedelta(days=7)
+    try:
+        df = get_year_data(curr_date.year)[0]
+        if last_date.year != curr_date.year:
+            df_last = get_year_data(last_date.year)[0]
+            df = pd.concat([df, df_last])
+
+        last_week = df[df['Date'].between(last_date, curr_date)]
+        today = df[df['Date'].between(curr_date, curr_date)]
+
+        games = tuple(zip(last_week['Date'], last_week['Title']))
+        msg = f"Last 7 days: {len(games)} games released\n\n"
+        for date, title in games:
+            row = f"{date.strftime('%d')} {date.strftime('%b')}:  {title}\n"
+            msg += row
+
+        games = tuple(zip(today['Date'], today['Title']))
+        msg += f"\nToday: {len(games)} games released\n\n"
+        for date, title in games:
+            row = f"{title}\n"
+            msg += row
+
+        em = discord.Embed(title="Newest Releases",
+                           description=msg,
+                           color=0xFF5733)
+        await ctx.send(embed=em)
+
+    except ValueError as e:
+        print(e)
+        await ctx.send("Error: Unable to find data!")
+
+
+
+
+
+
+
+
+client.run(os.getenv('RELEASES_TOKEN'))
+
