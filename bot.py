@@ -10,7 +10,7 @@ import motor.motor_asyncio
 
 
 prefix = '!'
-client = commands.Bot(command_prefix=prefix)
+client = commands.Bot(command_prefix=prefix, help_command=None)
 table_url = "http://en.wikipedia.org/wiki/{0}_in_video_games"
 cluster = motor.motor_asyncio.AsyncIOMotorClient(os.getenv('CLUSTER'))
 db_table = cluster[os.getenv('DATABASE')][os.getenv('TABLE')]
@@ -71,6 +71,41 @@ async def on_ready():
     list_today.start()
 
 
+
+""" Display embedded list of commands with their names and descriptions """
+
+
+@client.command(brief="""Enter command name after invoking for detailed description
+                      of the command""",
+                help="""Enter command name after invoking for detailed description
+                      of the command""")
+async def help(ctx, command_name=None):
+    em = discord.Embed(title="Help",
+                       color=discord.Colour.blue())
+    commands = {c.name: c for c in client.commands}
+    
+    if command_name is None:
+        # Display command names and brief description as default
+        for c in commands.values():
+            em.add_field(name=f"{c.name} {c.signature}",
+                         value=c.brief,
+                         inline=False)
+    elif command_name in commands.keys():
+        # Display detailed description of chosen command
+        comm = commands[command_name]
+        em.add_field(name=f"{comm.name} {comm.signature}",
+                     value=comm.help,
+                     inline=False)
+    else:
+        # Display error message for invalid commands
+        em.add_field(name="Error",
+                     value=f"The command {arg} does not exist!",
+                     inline=False)
+            
+    await ctx.send(embed=em)
+        
+
+
 """ List video game releases for chosen month and year,
 sorted by date, in embed"""
 
@@ -82,7 +117,8 @@ sorted by date, in embed"""
                        (e.g. !list january)
                      - Get releases for different month and year: !list [month] [year]
                        (e.g. !list august 2020)\n
-                     NB: Can only go back upto 2015 currently""")
+                     NB: Can only go back upto 2015 currently""",
+                brief="List video game releases for given month and year")
 async def list_releases(ctx, month=None, year=None):
     curr_date = ctx.message.created_at
 
@@ -126,7 +162,8 @@ async def list_releases(ctx, month=None, year=None):
 
 
 @client.command(name='new',
-                help='Show games released in past 7 days and today')
+                help="Show games released in past 7 days and today",
+                brief="Show games released in past 7 days and today")
 async def post_new(ctx):
     curr_date = ctx.message.created_at.replace(hour=0, minute=0,
                                                second=0, microsecond=0)
@@ -166,7 +203,7 @@ async def post_new(ctx):
                            color=0xFF5733)
         await ctx.send(embed=em)
 
-    except ValueError as e:
+    except Exception as e:
         print(traceback.format_exc())
         msg = "Unable to get required data!"
         title = "Error"
@@ -179,7 +216,8 @@ async def post_new(ctx):
 """ List games to be released in next 7 days in an embed """
 
 
-@client.command(name='soon', help="Show games releasing in the next 7 days")
+@client.command(name='soon', help="Show games releasing in the next 7 days",
+                brief="Show games releasing in the next 7 days")
 async def post_upcoming(ctx):
     curr_date = ctx.message.created_at.replace(hour=0, minute=0,
                                                second=0, microsecond=0)
@@ -226,21 +264,22 @@ async def post_upcoming(ctx):
 @client.command(name='notify',
                 help="""Enable daily notifications about releases in the current channel.\n
                         - Set notifications to be posted at current time: !notify
-                        - Set notifications to be posted at certain time of day: !notify [time_of_day]\n
-                        [time_of_day] is a 4 digit number which gives the time of day in 24h clock format.
+                        - Set notifications to be posted at certain time of day: !notify [clock_time]\n
+                        [clock_time] is a 4 digit number which gives the time of day in 24h clock format.
                         e.g. to set notifications for 6:30 PM, !notify 1830.
                         e.g. to set notifications for 4:15 AM, !notify 0415\n
-                        Notification dates are given in UTC+0 timezone format.""")
-async def notify(ctx, time_of_day=None):
+                        Notification dates are given in UTC+0 timezone format.""",
+                brief="Enable daily notifications about releases in the current channel")
+async def notify(ctx, clock_time=None):
     channel = ctx.message.channel
     curr_date = ctx.message.created_at
     next_date = curr_date + datetime.timedelta(hours=24)
 
-    if time_of_day is not None:
+    if clock_time is not None:
         try:
             # Check input is 4 characters long and try to convert it
-            assert(len(time_of_day) == 4)
-            time_set = time.strptime(time_of_day, "%H%M")
+            assert(len(clock_time) == 4)
+            time_set = time.strptime(clock_time, "%H%M")
             notify_date = datetime.datetime(next_date.year, next_date.month,
                                             next_date.day, time_set.tm_hour,
                                             time_set.tm_min, 0, 0)
@@ -295,7 +334,8 @@ async def notify(ctx, time_of_day=None):
 
 
 @client.command(name='stop',
-                help="Disable daily notifications in the current channel")
+                help="Disable daily notifications in the current channel",
+                brief="Disable daily notifications in the current channel")
 async def remove_from_notify(ctx):
     channel = ctx.message.channel
     msg = ""
