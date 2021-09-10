@@ -4,12 +4,13 @@ import os
 import numpy as np
 import pandas as pd
 import datetime
+import time
 import traceback
 import motor.motor_asyncio
 
 
 prefix = '!'
-client = commands.Bot(command_prefix = prefix)
+client = commands.Bot(command_prefix=prefix)
 table_url = "http://en.wikipedia.org/wiki/{0}_in_video_games"
 cluster = motor.motor_asyncio.AsyncIOMotorClient(os.getenv('CLUSTER'))
 db_table = cluster[os.getenv('DATABASE')][os.getenv('TABLE')]
@@ -18,6 +19,7 @@ db_table = cluster[os.getenv('DATABASE')][os.getenv('TABLE')]
 """ Reads wikipedia tables from article for chosen year and filters for
 tables for releases"""
 
+
 def get_year_data(year):
     df = None
     url = None
@@ -25,7 +27,7 @@ def get_year_data(year):
         url = table_url.format(str(year))
         tables = pd.read_html(url, match='Title')
         months = []
-        headings = ['Month','Day','Title']
+        headings = ['Month', 'Day', 'Title']
 
         # Keep tables with first 3 columns of release tables as expected
         for frame in tables:
@@ -34,8 +36,8 @@ def get_year_data(year):
                 months.append(frame)
 
         # Merge kept tables. Replace TBA dates with NaN to remove later
-        df = (pd.concat(months)[['Month','Day','Title']]
-              .replace('TBA',np.NaN))
+        df = (pd.concat(months)[['Month', 'Day', 'Title']]
+              .replace('TBA', np.NaN))
 
         # Remove rows with inappropriate month data
         months = ["January", "February", "March",
@@ -51,27 +53,27 @@ def get_year_data(year):
         # Then make string column for dates and convert column to datetime
         df['Year'] = pd.Series([year] * len(df['Month']))
         df['Day'] = df['Day'].astype(int)
-        df['Date'] = df[['Year','Month','Day']].apply(lambda x: '-'.join(x.values.astype(str)), axis='columns')
+        df['Date'] = df[['Year', 'Month', 'Day']].apply(
+            lambda x: '-'.join(x.values.astype(str)), axis='columns')
         df['Date'] = pd.to_datetime(df['Date'])
-        
-        df.sort_values(by='Date', inplace=True)
-        df.drop(['Year','Day','Month'], axis='columns', inplace=True)
 
-    except ValueError as e:
+        df.sort_values(by='Date', inplace=True)
+        df.drop(['Year', 'Day', 'Month'], axis='columns', inplace=True)
+
+    except Exception as e:
         raise e
     return df, url
-
 
 
 @client.event
 async def on_ready():
     print("Ready as {0.user}".format(client))
-    list_today.start() # Start loop for checking notifications
-
+    list_today.start()
 
 
 """ List video game releases for chosen month and year,
 sorted by date, in embed"""
+
 
 @client.command(name='list', help="""
                     List video game releases for given month and year\n
@@ -82,13 +84,14 @@ sorted by date, in embed"""
                        (e.g. !list august 2020)\n
                      NB: Can only go back upto 2015 currently""")
 async def list_releases(ctx, month=None, year=None):
-    # Use date that message sent as default arguments, else get user input
     curr_date = ctx.message.created_at
-    if month == None:
+
+    # Use date that message sent as default arguments, else get user input
+    if month is None:
         curr_month = curr_date.strftime('%B')
     else:
         curr_month = month.title()
-    if year == None:
+    if year is None:
         curr_year = curr_date.year
     else:
         curr_year = year
@@ -108,22 +111,29 @@ async def list_releases(ctx, month=None, year=None):
                               url=wiki_url, description=msg,
                               color=0xFF5733)
         await ctx.send(embed=embed)
-        
-    except ValueError as e:
-        print(traceback.format_exc())
-        await ctx.send("Error: Unable to get data!")
 
+    except Exception as e:
+        print(traceback.format_exc())
+        msg = "Unable to get required data!"
+        title = "Error"
+        em = discord.Embed(title=title,
+                           description=msg,
+                           color=0xFF5733)
+        await ctx.send(embed=em)
 
 
 """ List games released in last 7 days and on current day in an embed """
 
-@client.command(name='new', help='Show games released in past 7 days and today')
+
+@client.command(name='new',
+                help='Show games released in past 7 days and today')
 async def post_new(ctx):
     curr_date = ctx.message.created_at.replace(hour=0, minute=0,
                                                second=0, microsecond=0)
     last_date = curr_date - datetime.timedelta(days=7)
     try:
         df = get_year_data(curr_date.year)[0]
+        # If there is change in years during week, get data from other year
         if last_date.year != curr_date.year:
             df_last = get_year_data(last_date.year)[0]
             df = pd.concat([df, df_last])
@@ -136,8 +146,8 @@ async def post_new(ctx):
         mask = ((df['Date'].dt.day == curr_date.day)
                 & (df['Date'].dt.month == curr_date.month)
                 & (df['Date'].dt.year == curr_date.year)
-        )
-        today= df.where(mask).dropna()
+                )
+        today = df.where(mask).dropna()
 
         # Construct lists of games ordered by date
         games = tuple(zip(last_week['Date'], last_week['Title']))
@@ -158,21 +168,25 @@ async def post_new(ctx):
 
     except ValueError as e:
         print(traceback.format_exc())
-        await ctx.send("Error: Unable to get data!")
-
+        msg = "Unable to get required data!"
+        title = "Error"
+        em = discord.Embed(title=title,
+                           description=msg,
+                           color=0xFF5733)
+        await ctx.send(embed=em)
 
 
 """ List games to be released in next 7 days in an embed """
+
 
 @client.command(name='soon', help="Show games releasing in the next 7 days")
 async def post_upcoming(ctx):
     curr_date = ctx.message.created_at.replace(hour=0, minute=0,
                                                second=0, microsecond=0)
     end_date = curr_date + datetime.timedelta(days=7)
-    
+
     try:
         df = get_year_data(curr_date.year)[0]
-
         # If there is change in years during week, get data from other year
         if end_date.year != curr_date.year:
             df_last = get_year_data(end_date.year)[0]
@@ -196,33 +210,72 @@ async def post_upcoming(ctx):
 
     except Exception as e:
         print(traceback.format_exc())
-        await ctx.send("Error: Unable to get data!")
+        msg = "Unable to get required data!"
+        title = "Error"
+        em = discord.Embed(title=title,
+                           description=msg,
+                           color=0xFF5733)
+        await ctx.send(embed=em)
 
 
+""" Record new channel notification subscription. If 4-digit number given,
+    try to convert it to 24h clock time and set notification time to it.
+    Otherwise use time of command invocation."""
 
-""" Record new channel notification subscription.
-    If already subscribed, display embed with error message"""
 
-@client.command(name='notify', help="Enable daily notifcations about releases in the current channel")
-async def notify(ctx):
+@client.command(name='notify',
+                help="""Enable daily notifications about releases in the current channel.\n
+                        - Set notifications to be posted at current time: !notify
+                        - Set notifications to be posted at certain time of day: !notify [time_of_day]\n
+                        [time_of_day] is a 4 digit number which gives the time of day in 24h clock format.
+                        e.g. to set notifications for 6:30 PM, !notify 1830.
+                        e.g. to set notifications for 4:15 AM, !notify 0415\n
+                        Notification dates are given in UTC+0 timezone format.""")
+async def notify(ctx, time_of_day=None):
     channel = ctx.message.channel
     curr_date = ctx.message.created_at
-    notify_date = curr_date + datetime.timedelta(hours=24)
+    next_date = curr_date + datetime.timedelta(hours=24)
+
+    if time_of_day is not None:
+        try:
+            # Check input is 4 characters long and try to convert it
+            assert(len(time_of_day) == 4)
+            time_set = time.strptime(time_of_day, "%H%M")
+            notify_date = datetime.datetime(next_date.year, next_date.month,
+                                            next_date.day, time_set.tm_hour,
+                                            time_set.tm_min, 0, 0)
+
+        except (ValueError, AssertionError) as e:
+            print(traceback.format_exc())
+
+            msg = """Invalid time of day given!
+                     It must be a 4-digit number between 0000-2359."""
+            title = "Error"
+            em = discord.Embed(title=title,
+                               description=msg,
+                               color=0xFF5733)
+            await ctx.send(embed=em)
+            return
+
+    else:
+        notify_date = next_date
+
     msg = ""
     title = ""
-
     data = await db_table.find_one({'channel_id': channel.id})
 
-    # If channel not in database, store notifcation data and set appropriate message
-    if data == None:
+    # If channel not in database, store notifcation data and set appropriate
+    # message
+    if data is None:
         new_ch = {'channel_id': channel.id, 'notify_date': notify_date}
-        db_table.insert_one(new_ch)
-        
+        result = await db_table.insert_one(new_ch)
+
         msg = f"""{ctx.message.author} has enabled daily notifications about releases in {channel}.
                 To disable notifications in {channel}, use command {prefix}stop"""
         title = "Channel Subscribed"
 
-    # If channel found, embed will have error message with next notification date
+    # If channel found, embed will have error message with next notification
+    # date
     else:
         notify_date = data['notify_date']
         msg = "Channel already receives notfications!"
@@ -232,16 +285,17 @@ async def notify(ctx):
                        description=msg,
                        color=0xFF5733)
     em.add_field(name="Next Notification Due",
-                 value=notify_date.strftime("%d %B %Y %H:%M %p (UTC+0)"),
+                 value=notify_date.strftime("%d %B %Y %H:%M (UTC+0)"),
                  inline=False)
     await ctx.send(embed=em)
-
 
 
 """ Delete channel subscription from database. If channel wasn't subscribed,
     post embed with error message"""
 
-@client.command(name='stop', help="Disable daily notifications in the current channel")
+
+@client.command(name='stop',
+                help="Disable daily notifications in the current channel")
 async def remove_from_notify(ctx):
     channel = ctx.message.channel
     msg = ""
@@ -250,7 +304,7 @@ async def remove_from_notify(ctx):
     data = await db_table.find_one({'channel_id': channel.id})
 
     # If channel in database, remove and set confirmation message
-    if data != None:
+    if data is not None:
         result = await db_table.delete_one(data)
         msg = f"Daily notifications for {channel} disabled by {ctx.message.author}"
         title = "Channel Unsubscribed"
@@ -266,10 +320,9 @@ async def remove_from_notify(ctx):
     await ctx.send(embed=em)
 
 
-
-
 """ Scrape release data from Wikipedia for current date and
     post notification to subscribed channels."""
+
 
 @tasks.loop(minutes=5)
 async def list_today():
@@ -301,21 +354,20 @@ async def list_today():
                     update_query = {'$set': {'notify_date': notify_date}}
                     result = await db_table.update_one(find_query, update_query)
 
-                    # Create embed with the releases list and post to subscribed channel
+                    # Create embed with the releases list and post to
+                    # subscribed channel
                     em = discord.Embed(title="Today's Releases",
-                            description=msg,
-                            color=0xFF5733)
-                    em.add_field(name="Next Notification Due",
-                         value=notify_date.strftime("%d %B %Y %H:%M (UTC+0)"),
-                         inline=False)
+                                       description=msg,
+                                       color=0xFF5733)
+                    em.add_field(
+                        name="Next Notification Due",
+                        value=notify_date.strftime("%d %B %Y %H:%M (UTC+0)"),
+                        inline=False)
                     channel = client.get_channel(row['channel_id'])
-                    await channel.send(embed = em)
+                    await channel.send(embed=em)
 
         except Exception as e:
             print(traceback.format_exc())
 
 
-
-
 client.run(os.getenv('RELEASES_TOKEN'))
-
