@@ -5,16 +5,14 @@ import numpy as np
 import pandas as pd
 import datetime
 import traceback
-import asyncio
+import motor.motor_asyncio
 
 
 prefix = '!'
 client = commands.Bot(command_prefix = prefix)
 table_url = "http://en.wikipedia.org/wiki/{0}_in_video_games"
-
-# Subscribed channel list, stores channel and next notification dates
-channels = dict() 
-
+cluster = motor.motor_asyncio.AsyncIOMotorClient(os.getenv('CLUSTER'))
+db_table = cluster[os.getenv('DATABASE')][os.getenv('TABLE')]
 
 
 """ Reads wikipedia tables from article for chosen year and filters for
@@ -104,8 +102,7 @@ async def list_releases(ctx, month=None, year=None):
         games = tuple(zip(df['Day'], df['Title']))
         msg = f"{len(games)} games released this month\n\n"
         for day, title in games:
-            row = f"{day}  {title}\n"
-            msg += row
+            msg += f"{day}  {title}\n"
 
         embed = discord.Embed(title=f"Releases for {curr_month} {curr_year}",
                               url=wiki_url, description=msg,
@@ -152,8 +149,7 @@ async def post_new(ctx):
         games = tuple(zip(today['Date'], today['Title']))
         msg += f"\nToday: {len(games)} games released\n\n"
         for date, title in games:
-            row = f"{title}\n"
-            msg += row
+            msg += f"{title}\n"
 
         em = discord.Embed(title="Newest Releases",
                            description=msg,
@@ -173,8 +169,11 @@ async def post_upcoming(ctx):
     curr_date = ctx.message.created_at.replace(hour=0, minute=0,
                                                second=0, microsecond=0)
     end_date = curr_date + datetime.timedelta(days=7)
+    
     try:
         df = get_year_data(curr_date.year)[0]
+
+        # If there is change in years during week, get data from other year
         if end_date.year != curr_date.year:
             df_last = get_year_data(end_date.year)[0]
             df = pd.concat([df, df_last])
@@ -201,57 +200,82 @@ async def post_upcoming(ctx):
 
 
 
-""" Add channel to notifcations list """
+""" Record new channel notification subscription.
+    If already subscribed, display embed with error message"""
 
-@client.command(name='notify', help="Enable daily notifcations about releases in the channel this command is invoked in")
+@client.command(name='notify', help="Enable daily notifcations about releases in the current channel")
 async def notify(ctx):
     channel = ctx.message.channel
     curr_date = ctx.message.created_at
     notify_date = curr_date + datetime.timedelta(hours=24)
+    msg = ""
+    title = ""
 
-    # Wait until channel list and release data not in use
-    # before modifying channel list
-    task = asyncio.create_task(list_today())
-    await task
-    channels[channel] = notify_date
+    data = await db_table.find_one({'channel_id': channel.id})
 
-    msg = f"""{ctx.message.author} has enabled daily notifications about releases in {channel}.
-To disable notifications in {channel}, use command {prefix}stop"""
-    em = discord.Embed(title="Channel Subscribed",
-                           description=msg,
-                           color=0xFF5733)
-    em.add_field(name="Next Notification",
-                 value=notify_date.strftime("%d %B %Y %H:%M %p"),
+    # If channel not in database, store notifcation data and set appropriate message
+    if data == None:
+        new_ch = {'channel_id': channel.id, 'notify_date': notify_date}
+        db_table.insert_one(new_ch)
+        
+        msg = f"""{ctx.message.author} has enabled daily notifications about releases in {channel}.
+                To disable notifications in {channel}, use command {prefix}stop"""
+        title = "Channel Subscribed"
+
+    # If channel found, embed will have error message with next notification date
+    else:
+        notify_date = data['notify_date']
+        msg = "Channel already receives notfications!"
+        title = "Error"
+
+    em = discord.Embed(title=title,
+                       description=msg,
+                       color=0xFF5733)
+    em.add_field(name="Next Notification Due",
+                 value=notify_date.strftime("%d %B %Y %H:%M %p (UTC+0)"),
                  inline=False)
     await ctx.send(embed=em)
 
 
 
-""" Remove channel from notifications list """
+""" Delete channel subscription from database. If channel wasn't subscribed,
+    post embed with error message"""
 
-@client.command(name='stop', help="Unsubscribe channel from notifications list")
+@client.command(name='stop', help="Disable daily notifications in the current channel")
 async def remove_from_notify(ctx):
     channel = ctx.message.channel
+    msg = ""
+    title = ""
 
-    # Wait until channel list and release data not in use
-    # before modifying channel list
-    task = asyncio.create_task(list_today())
-    await task
-    channels.pop(channel)
+    data = await db_table.find_one({'channel_id': channel.id})
 
-    msg = f"Daily notifications for {channel} disabled by {ctx.message.author}"
-    em = discord.Embed(title="Channel Unsubscribed",
+    # If channel in database, remove and set confirmation message
+    if data != None:
+        result = await db_table.delete_one(data)
+        msg = f"Daily notifications for {channel} disabled by {ctx.message.author}"
+        title = "Channel Unsubscribed"
+
+    # If channel not found set error message
+    else:
+        msg = "Channel does not receive notifications"
+        title = "Error"
+
+    em = discord.Embed(title=title,
                        description=msg,
                        color=0xFF5733)
     await ctx.send(embed=em)
 
 
 
-""" Post embedded list of current day's releases to subscribed channels """
 
-@tasks.loop(hours=24)
+""" Scrape release data from Wikipedia for current date and
+    post notification to subscribed channels."""
+
+@tasks.loop(minutes=5)
 async def list_today():
-    if len(channels.keys()) > 0:
+    # Don't do anything if no channel records in database
+    records = await db_table.find().to_list(length=None)
+    if len(records) > 0:
         try:
             # Get releases for current date
             curr_date = datetime.datetime.now()
@@ -266,26 +290,26 @@ async def list_today():
             games = tuple(zip(today['Date'], today['Title']))
             msg = f"{len(games)} games released\n\n"
             for date, title in games:
-                row = f"{title}\n"
-                msg += row
+                msg += f"{title}\n"
 
-            # Send embedded lists to each channel where
-            # next notification date has past
-            for ch in channels.keys():
-                notify_date = channels[ch]
-                if notify_date <= curr_date:
-                    # Set new future notification date for channel
+            for row in records:
+                if row['notify_date'] <= curr_date:
+                    # Set new future notification date for channel and
+                    # update database table with new date
                     notify_date = curr_date + datetime.timedelta(hours=24)
-                    channels[ch] = notify_date
+                    find_query = {'channel_id': row['channel_id']}
+                    update_query = {'$set': {'notify_date': notify_date}}
+                    result = await db_table.update_one(find_query, update_query)
 
+                    # Create embed with the releases list and post to subscribed channel
                     em = discord.Embed(title="Today's Releases",
                             description=msg,
                             color=0xFF5733)
-                    em.add_field(name="Next Notification",
-                         value=notify_date.strftime("%d %B %Y %H:%M %p"),
+                    em.add_field(name="Next Notification Due",
+                         value=notify_date.strftime("%d %B %Y %H:%M (UTC+0)"),
                          inline=False)
-
-                    await ch.send(embed = em)
+                    channel = client.get_channel(row['channel_id'])
+                    await channel.send(embed = em)
 
         except Exception as e:
             print(traceback.format_exc())
