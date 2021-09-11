@@ -301,12 +301,12 @@ async def notify(ctx, clock_time=None):
 
     msg = ""
     title = ""
-    data = await db_table.find_one({'channel_id': channel.id})
+    data = await db_table.find_one({'_id': channel.id})
 
     # If channel not in database, store notifcation data and set appropriate
     # message
     if data is None:
-        new_ch = {'channel_id': channel.id, 'notify_date': notify_date}
+        new_ch = {'_id': channel.id, 'notify_date': notify_date}
         result = await db_table.insert_one(new_ch)
 
         msg = f"""{ctx.message.author} has enabled daily notifications about releases in {channel}.
@@ -341,7 +341,7 @@ async def remove_from_notify(ctx):
     msg = ""
     title = ""
 
-    data = await db_table.find_one({'channel_id': channel.id})
+    data = await db_table.find_one({'_id': channel.id})
 
     # If channel in database, remove and set confirmation message
     if data is not None:
@@ -390,7 +390,7 @@ async def list_today():
                     # Set new future notification date for channel and
                     # update database table with new date
                     notify_date = curr_date + datetime.timedelta(hours=24)
-                    find_query = {'channel_id': row['channel_id']}
+                    find_query = {'_id': row['channel_id']}
                     update_query = {'$set': {'notify_date': notify_date}}
                     result = await db_table.update_one(find_query, update_query)
 
