@@ -72,6 +72,26 @@ async def on_ready():
 
 
 
+""" Check for errors raised after invoking commands """
+
+
+@client.event
+async def on_command_error(ctx, error):
+    # Send embedded error message if user does not have appropriate permissions
+    if isinstance(error, commands.MissingPermissions):
+        em = discord.Embed(title="Error",
+                           description=f"{ctx.message.author} is missing permissions to run this command",
+                           color=discord.Colour.red())
+        await ctx.send(embed=em)
+
+    # Send error message if bot does not have permission to send embeds
+    elif isinstance(error, commands.BotMissingPermissions):
+        msg = "Error!\nBot does not have permissions to send embeds"
+        await ctx.send(msg)
+        print(error.missing_perms)
+
+
+
 """ Display embedded list of commands with their names and descriptions """
 
 
@@ -79,6 +99,7 @@ async def on_ready():
                       of the command""",
                 help="""Enter command name after invoking for detailed description
                       of the command""")
+@commands.bot_has_permissions(embed_links=True)
 async def help(ctx, command_name=None):
     em = discord.Embed(title="Help",
                        color=discord.Colour.blue())
@@ -119,6 +140,7 @@ sorted by date, in embed"""
                        (e.g. !list august 2020)\n
                      NB: Can only go back upto 2015 currently""",
                 brief="List video game releases for given month and year")
+@commands.bot_has_permissions(embed_links=True)
 async def list_releases(ctx, month=None, year=None):
     curr_date = ctx.message.created_at
 
@@ -158,12 +180,13 @@ async def list_releases(ctx, month=None, year=None):
         await ctx.send(embed=em)
 
 
-""" List games released in last 7 days and on current day in an embed """
+""" List games released in last 7 days and on current day in an embed."""
 
 
 @client.command(name='new',
                 help="Show games released in past 7 days and today",
                 brief="Show games released in past 7 days and today")
+@commands.bot_has_permissions(embed_links=True)
 async def post_new(ctx):
     curr_date = ctx.message.created_at.replace(hour=0, minute=0,
                                                second=0, microsecond=0)
@@ -213,11 +236,14 @@ async def post_new(ctx):
         await ctx.send(embed=em)
 
 
-""" List games to be released in next 7 days in an embed """
+""" List games to be released in next 7 days in an embed.
+    Requires users who invoke this command to have permission
+    to manage messages. """
 
 
 @client.command(name='soon', help="Show games releasing in the next 7 days",
                 brief="Show games releasing in the next 7 days")
+@commands.bot_has_permissions(embed_links=True)
 async def post_upcoming(ctx):
     curr_date = ctx.message.created_at.replace(hour=0, minute=0,
                                                second=0, microsecond=0)
@@ -258,18 +284,22 @@ async def post_upcoming(ctx):
 
 """ Record new channel notification subscription. If 4-digit number given,
     try to convert it to 24h clock time and set notification time to it.
-    Otherwise use time of command invocation."""
+    Otherwise use time of command invocation.
+    Requires users to have permission to manage messages. """
 
 
 @client.command(name='notify',
-                help="""Enable daily notifications about releases in the current channel.\n
+                help="""Schedule daily notifications about releases in the current channel.\n
                         - Set notifications to be posted at current time: !notify
                         - Set notifications to be posted at certain time of day: !notify [clock_time]\n
                         [clock_time] is a 4 digit number which gives the time of day in 24h clock format.
                         e.g. to set notifications for 6:30 PM, !notify 1830.
                         e.g. to set notifications for 4:15 AM, !notify 0415\n
-                        Notification dates are given in UTC+0 timezone format.""",
+                        Notification dates are given in UTC+0 timezone format.\n
+                        Note: Users must have permission to Manage Messages to use notification system.""",
                 brief="Enable daily notifications about releases in the current channel")
+@commands.bot_has_permissions(embed_links=True)
+@commands.has_permissions(manage_messages=True)
 async def notify(ctx, clock_time=None):
     channel = ctx.message.channel
     curr_date = ctx.message.created_at
@@ -334,8 +364,11 @@ async def notify(ctx, clock_time=None):
 
 
 @client.command(name='stop',
-                help="Disable daily notifications in the current channel",
-                brief="Disable daily notifications in the current channel")
+                help="""Unsubscribe from daily notifications in the current channel\n
+                        Note: Users must have permission to Manage Messages to use notification system.""",
+                brief="""Unsubscribe from daily notifications in the current channel.""")
+@commands.bot_has_permissions(embed_links=True)
+@commands.has_permissions(manage_messages=True)
 async def remove_from_notify(ctx):
     channel = ctx.message.channel
     msg = ""

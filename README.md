@@ -6,12 +6,14 @@
 * [Features](#features)
 * [Main Tools](#main-tools)
 * [Setup](#setup)
+* [License](#license)
 * [Credit](#credit)
 
 ## Features
 - List monthly releases for chosen month and year
 - List games released last week, today and next week
 - Schedule and manage daily channel notifications for releases
+  > Must have Manage Messages permission in server
 
 ## Main Tools
 - Python 3.9 and discord.py for writing the bot
