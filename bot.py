@@ -68,7 +68,7 @@ def get_year_data(year):
 @client.event
 async def on_ready():
     print("Ready as {0.user}".format(client))
-    list_today.start()
+    check_notifications.start()
 
 
 
@@ -120,8 +120,9 @@ async def help(ctx, command_name=None):
     else:
         # Display error message for invalid commands
         em.add_field(name="Error",
-                     value=f"The command {arg} does not exist!",
+                     value=f"The command {command_name} does not exist!",
                      inline=False)
+        em.color = discord.Colour.red()
             
     await ctx.send(embed=em)
         
@@ -176,7 +177,7 @@ async def list_releases(ctx, month=None, year=None):
         title = "Error"
         em = discord.Embed(title=title,
                            description=msg,
-                           color=0xFF5733)
+                           color=discord.Colour.red())
         await ctx.send(embed=em)
 
 
@@ -232,7 +233,7 @@ async def post_new(ctx):
         title = "Error"
         em = discord.Embed(title=title,
                            description=msg,
-                           color=0xFF5733)
+                           color=discord.Colour.red())
         await ctx.send(embed=em)
 
 
@@ -278,7 +279,7 @@ async def post_upcoming(ctx):
         title = "Error"
         em = discord.Embed(title=title,
                            description=msg,
-                           color=0xFF5733)
+                           color=discord.Colour.red())
         await ctx.send(embed=em)
 
 
@@ -313,19 +314,16 @@ async def notify(ctx, clock_time=None):
             notify_date = datetime.datetime(next_date.year, next_date.month,
                                             next_date.day, time_set.tm_hour,
                                             time_set.tm_min, 0, 0)
-
         except (ValueError, AssertionError) as e:
             print(traceback.format_exc())
-
             msg = """Invalid time of day given!
                      It must be a 4-digit number between 0000-2359."""
             title = "Error"
             em = discord.Embed(title=title,
                                description=msg,
-                               color=0xFF5733)
+                               color=discord.Colour.red())
             await ctx.send(embed=em)
             return
-
     else:
         notify_date = next_date
 
@@ -342,21 +340,24 @@ async def notify(ctx, clock_time=None):
         msg = f"""{ctx.message.author} has enabled daily notifications about releases in {channel}.
                 To disable notifications in {channel}, use command {prefix}stop"""
         title = "Channel Subscribed"
+        colour = 0xFF5733
 
-    # If channel found, embed will have error message with next notification
-    # date
+    # If channel found, embed will have error message with next notification date
     else:
         notify_date = data['notify_date']
         msg = "Channel already receives notfications!"
         title = "Error"
+        colour = discord.Colour.red()
 
     em = discord.Embed(title=title,
                        description=msg,
-                       color=0xFF5733)
+                       color=colour)
     em.add_field(name="Next Notification Due",
                  value=notify_date.strftime("%d %B %Y %H:%M (UTC+0)"),
                  inline=False)
     await ctx.send(embed=em)
+
+
 
 
 """ Delete channel subscription from database. If channel wasn't subscribed,
@@ -373,7 +374,7 @@ async def remove_from_notify(ctx):
     channel = ctx.message.channel
     msg = ""
     title = ""
-
+    colour = 0xFF5733
     data = await db_table.find_one({'_id': channel.id})
 
     # If channel in database, remove and set confirmation message
@@ -386,11 +387,13 @@ async def remove_from_notify(ctx):
     else:
         msg = "Channel does not receive notifications"
         title = "Error"
+        colour = discord.Colour.red()
 
     em = discord.Embed(title=title,
                        description=msg,
-                       color=0xFF5733)
+                       color=colour)
     await ctx.send(embed=em)
+
 
 
 """ Scrape release data from Wikipedia for current date and
@@ -398,13 +401,13 @@ async def remove_from_notify(ctx):
 
 
 @tasks.loop(minutes=5)
-async def list_today():
-    # Don't do anything if no channel records in database
-    records = await db_table.find().to_list(length=None)
-    if len(records) > 0:
-        try:
+@commands.bot_has_permissions(embed_links=True)
+async def check_notifications():
+    try:
+        curr_date = datetime.datetime.now()
+        data = db_table.find({'notify_date': {'$lte': curr_date}})
+        if data is not None:
             # Get releases for current date
-            curr_date = datetime.datetime.now()
             df = get_year_data(curr_date.year)[0]
             mask = ((df['Date'].dt.day == curr_date.day)
                     & (df['Date'].dt.month == curr_date.month)
@@ -417,30 +420,31 @@ async def list_today():
             msg = f"{len(games)} games released\n\n"
             for date, title in games:
                 msg += f"{title}\n"
+            
+            for row in await data.to_list(length=None):
+                # Set new future notification date for channel and
+                # update database table with new date
+                notify_date = curr_date + datetime.timedelta(hours=24)
+                find_query = {'_id': row['_id']}
+                update_query = {'$set': {'notify_date': notify_date}}
+                result = await db_table.update_one(find_query, update_query)
 
-            for row in records:
-                if row['notify_date'] <= curr_date:
-                    # Set new future notification date for channel and
-                    # update database table with new date
-                    notify_date = curr_date + datetime.timedelta(hours=24)
-                    find_query = {'_id': row['channel_id']}
-                    update_query = {'$set': {'notify_date': notify_date}}
-                    result = await db_table.update_one(find_query, update_query)
+                # Create embed with the releases list and post to
+                # subscribed channel
+                em = discord.Embed(title="Today's Releases",
+                                   description=msg,
+                                   color=0xFF5733)
+                em.add_field(
+                    name="Next Notification Due",
+                    value=notify_date.strftime("%d %B %Y %H:%M (UTC+0)"),
+                    inline=False)
+                channel = client.get_channel(row['_id'])
+                await channel.send(embed=em)
+                
+    except Exception as e:
+        print(traceback.format_exc())
 
-                    # Create embed with the releases list and post to
-                    # subscribed channel
-                    em = discord.Embed(title="Today's Releases",
-                                       description=msg,
-                                       color=0xFF5733)
-                    em.add_field(
-                        name="Next Notification Due",
-                        value=notify_date.strftime("%d %B %Y %H:%M (UTC+0)"),
-                        inline=False)
-                    channel = client.get_channel(row['channel_id'])
-                    await channel.send(embed=em)
 
-        except Exception as e:
-            print(traceback.format_exc())
 
 
 client.run(os.getenv('RELEASES_TOKEN'))
