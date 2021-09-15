@@ -15,6 +15,9 @@ table_url = "http://en.wikipedia.org/wiki/{0}_in_video_games"
 cluster = motor.motor_asyncio.AsyncIOMotorClient(os.getenv('CLUSTER'))
 db_table = cluster[os.getenv('DATABASE')][os.getenv('TABLE')]
 
+c_error = discord.Colour.red()
+c_info = discord.Colour.blue()
+
 
 """ Reads wikipedia tables from article for chosen year and filters for
 tables for releases"""
@@ -80,13 +83,13 @@ async def on_command_error(ctx, error):
     # Send embedded error message if user does not have appropriate permissions
     if isinstance(error, commands.MissingPermissions):
         em = discord.Embed(title="Error",
-                           description=f"{ctx.message.author} is missing permissions to run this command",
-                           color=discord.Colour.red())
+                           description=f"{ctx.message.author} is missing permission to Manage Messages",
+                           color=c_error)
         await ctx.send(embed=em)
 
     # Send error message if bot does not have permission to send embeds
     elif isinstance(error, commands.BotMissingPermissions):
-        msg = "Error!\nBot does not have permissions to send embeds"
+        msg = "Error!\nBot does not have permission to send embeds"
         await ctx.send(msg)
         print(error.missing_perms)
 
@@ -102,7 +105,7 @@ async def on_command_error(ctx, error):
 @commands.bot_has_permissions(embed_links=True)
 async def help(ctx, command_name=None):
     em = discord.Embed(title="Help",
-                       color=discord.Colour.blue())
+                       color=c_info)
     commands = {c.name: c for c in client.commands}
     
     if command_name is None:
@@ -122,7 +125,7 @@ async def help(ctx, command_name=None):
         em.add_field(name="Error",
                      value=f"The command {command_name} does not exist!",
                      inline=False)
-        em.color = discord.Colour.red()
+        em.color = c_error
             
     await ctx.send(embed=em)
         
@@ -168,7 +171,7 @@ async def list_releases(ctx, month=None, year=None):
 
         embed = discord.Embed(title=f"Releases for {curr_month} {curr_year}",
                               url=wiki_url, description=msg,
-                              color=0xFF5733)
+                              color=c_info)
         await ctx.send(embed=embed)
 
     except Exception as e:
@@ -177,7 +180,7 @@ async def list_releases(ctx, month=None, year=None):
         title = "Error"
         em = discord.Embed(title=title,
                            description=msg,
-                           color=discord.Colour.red())
+                           color=c_error)
         await ctx.send(embed=em)
 
 
@@ -224,7 +227,7 @@ async def post_new(ctx):
 
         em = discord.Embed(title="Newest Releases",
                            description=msg,
-                           color=0xFF5733)
+                           color=c_info)
         await ctx.send(embed=em)
 
     except Exception as e:
@@ -233,13 +236,11 @@ async def post_new(ctx):
         title = "Error"
         em = discord.Embed(title=title,
                            description=msg,
-                           color=discord.Colour.red())
+                           color=c_error)
         await ctx.send(embed=em)
 
 
-""" List games to be released in next 7 days in an embed.
-    Requires users who invoke this command to have permission
-    to manage messages. """
+""" List games to be released in next 7 days in an embed."""
 
 
 @client.command(name='soon', help="Show games releasing in the next 7 days",
@@ -270,7 +271,7 @@ async def post_upcoming(ctx):
 
         em = discord.Embed(title="Upcoming Releases",
                            description=msg,
-                           color=0xFF5733)
+                           color=c_info)
         await ctx.send(embed=em)
 
     except Exception as e:
@@ -279,13 +280,14 @@ async def post_upcoming(ctx):
         title = "Error"
         em = discord.Embed(title=title,
                            description=msg,
-                           color=discord.Colour.red())
+                           color=c_error)
         await ctx.send(embed=em)
 
 
-""" Record new channel notification subscription. If 4-digit number given,
-    try to convert it to 24h clock time and set notification time to it.
-    Otherwise use time of command invocation.
+""" Record new channel notification subscription.
+    If channel already subscribed display current subscription info.
+    Optional 4-digit 24h clock_time is used to get new time of day
+    to set posting of notifications.
     Requires users to have permission to manage messages. """
 
 
@@ -317,11 +319,11 @@ async def notify(ctx, clock_time=None):
         except (ValueError, AssertionError) as e:
             print(traceback.format_exc())
             msg = """Invalid time of day given!
-                     It must be a 4-digit number between 0000-2359."""
+                     It must be a valid 4-digit 24h clock time between 0000-2359."""
             title = "Error"
             em = discord.Embed(title=title,
                                description=msg,
-                               color=discord.Colour.red())
+                               color=c_error)
             await ctx.send(embed=em)
             return
     else:
@@ -331,27 +333,27 @@ async def notify(ctx, clock_time=None):
     title = ""
     data = await db_table.find_one({'_id': channel.id})
 
-    # If channel not in database, store notifcation data and set appropriate
+    # If channel not in database, store notification data and set appropriate
     # message
     if data is None:
         new_ch = {'_id': channel.id, 'notify_date': notify_date}
         result = await db_table.insert_one(new_ch)
 
-        msg = f"""{ctx.message.author} has enabled daily notifications about releases in {channel}.
-                To disable notifications in {channel}, use command {prefix}stop"""
+        msg = f"""{ctx.message.author} has enabled daily notifications about releases in {channel}.\n
+                  To change notification time, type {prefix}set
+                  To stop notifications in this channel, type {prefix}stop"""
         title = "Channel Subscribed"
-        colour = 0xFF5733
 
     # If channel found, embed will have error message with next notification date
     else:
         notify_date = data['notify_date']
-        msg = "Channel already receives notfications!"
-        title = "Error"
-        colour = discord.Colour.red()
+        msg = f"""To change notification time, type {prefix}set
+                  To stop notifications in this channel, type {prefix}stop"""
+        title = "Found Existing Subscription"
 
     em = discord.Embed(title=title,
                        description=msg,
-                       color=colour)
+                       color=c_info)
     em.add_field(name="Next Notification Due",
                  value=notify_date.strftime("%d %B %Y %H:%M (UTC+0)"),
                  inline=False)
@@ -374,7 +376,7 @@ async def remove_from_notify(ctx):
     channel = ctx.message.channel
     msg = ""
     title = ""
-    colour = 0xFF5733
+    colour = c_info
     data = await db_table.find_one({'_id': channel.id})
 
     # If channel in database, remove and set confirmation message
@@ -385,14 +387,76 @@ async def remove_from_notify(ctx):
 
     # If channel not found set error message
     else:
-        msg = "Channel does not receive notifications"
+        msg = f"""Channel does not receive notifications!
+                  To enable notifications in this channel type {prefix}notify"""
         title = "Error"
-        colour = discord.Colour.red()
+        colour = c_error
 
     em = discord.Embed(title=title,
                        description=msg,
                        color=colour)
     await ctx.send(embed=em)
+
+
+
+
+@client.command(name='set',
+                help="""Set a new time for notifications in the current channel.
+                        The date when notifications are posted will not change.\n
+                        <clock_time> is a 4 digit number which gives the time of day in 24h clock format.
+                        e.g. to set notifications for 6:30 PM, !notify 1830.
+                        e.g. to set notifications for 4:15 AM, !notify 0415\n
+                        Notification dates are given in UTC+0 timezone format.\n
+                        Note: Users must have permission to Manage Messages to use notification system.""",
+                brief="Set new time for channel daily notifications")
+@commands.bot_has_permissions(embed_links=True)
+@commands.has_permissions(manage_messages=True)
+async def set_notify_time(ctx, clock_time):
+    channel = ctx.message.channel
+    try:
+        # Check input is 4 characters long and try to convert it
+        assert(clock_time is not None)
+        assert(len(clock_time) == 4)
+        time_set = time.strptime(clock_time, "%H%M")
+        data = await db_table.find_one({'_id': channel.id})
+        
+        if data is not None:
+            time_set = time.strptime(clock_time, "%H%M")
+            old_date = data['notify_date']
+            notify_date = datetime.datetime(old_date.year, old_date.month,
+                                            old_date.day, time_set.tm_hour,
+                                            time_set.tm_min, 0, 0)
+            find_query = {'_id': data['_id']}
+            update_query = {'$set': {'notify_date': notify_date}}
+            result = await db_table.update_one(find_query, update_query)
+            msg = f"{ctx.message.author} set a new notification time for {channel}"
+            em = discord.Embed(title="New Time Set",
+                               description=msg,
+                               color=c_info)
+            em.add_field(name="New Notification Time",
+                         value=notify_date.strftime("%d %B %Y %H:%M (UTC+0)"),
+                         inline=False)
+            await ctx.send(embed=em)
+
+        else:
+            msg = f"""Channel does not receive notifications!
+                      To start notifications type {prefix}notify"""
+            em = discord.Embed(title="Error",
+                               description=msg,
+                               color=c_error)
+            await ctx.send(embed=em)
+            
+            
+    except (ValueError, AssertionError) as e:
+        print(traceback.format_exc())
+        msg = """Invalid time of day given!
+                 It must be a valid 4-digit 24h clock time between 0000-2359."""
+        title = "Error"
+        em = discord.Embed(title=title,
+                           description=msg,
+                           color=c_error)
+        await ctx.send(embed=em)
+    
 
 
 
@@ -433,7 +497,7 @@ async def check_notifications():
                 # subscribed channel
                 em = discord.Embed(title="Today's Releases",
                                    description=msg,
-                                   color=0xFF5733)
+                                   color=c_info)
                 em.add_field(
                     name="Next Notification Due",
                     value=notify_date.strftime("%d %B %Y %H:%M (UTC+0)"),
