@@ -93,6 +93,13 @@ async def on_command_error(ctx, error):
         await ctx.send(msg)
         print(error.missing_perms)
 
+    # Send error message if command invoked without required argument
+    elif isinstance(error, commands.MissingRequiredArgument):
+        em = discord.Embed(title="Error",
+                           description=f"Command is missing the required argument {error.param}",
+                           color=c_error)
+        await ctx.send(embed=em)
+
 
 
 """ Display embedded list of commands with their names and descriptions """
@@ -284,6 +291,7 @@ async def post_upcoming(ctx):
         await ctx.send(embed=em)
 
 
+
 """ Record new channel notification subscription.
     If channel already subscribed display current subscription info.
     Optional 4-digit 24h clock_time is used to get new time of day
@@ -307,57 +315,59 @@ async def notify(ctx, clock_time=None):
     channel = ctx.message.channel
     curr_date = ctx.message.created_at
     next_date = curr_date + datetime.timedelta(hours=24)
-
-    if clock_time is not None:
-        try:
-            # Check input is 4 characters long and try to convert it
-            assert(len(clock_time) == 4)
-            time_set = time.strptime(clock_time, "%H%M")
-            notify_date = datetime.datetime(next_date.year, next_date.month,
-                                            next_date.day, time_set.tm_hour,
-                                            time_set.tm_min, 0, 0)
-        except (ValueError, AssertionError) as e:
-            print(traceback.format_exc())
-            msg = """Invalid time of day given!
-                     It must be a valid 4-digit 24h clock time between 0000-2359."""
-            title = "Error"
-            em = discord.Embed(title=title,
-                               description=msg,
-                               color=c_error)
-            await ctx.send(embed=em)
-            return
-    else:
-        notify_date = next_date
-
-    msg = ""
-    title = ""
     data = await db_table.find_one({'_id': channel.id})
 
-    # If channel not in database, store notification data and set appropriate
-    # message
-    if data is None:
-        new_ch = {'_id': channel.id, 'notify_date': notify_date}
-        result = await db_table.insert_one(new_ch)
+    if data is not None:
+        # Show current notification date for channel
+        notify_date = data['notify_date']
+        msg = f"""To change notification time, type {prefix}set
+                  To stop notifications in this channel, type {prefix}stop"""
+        title = "Found Existing Subscription"
+        em = discord.Embed(title=title,
+                       description=msg,
+                       color=c_info)
+        em.add_field(name="Next Notification Due",
+                     value=notify_date.strftime("%d %B %Y %H:%M (UTC+0)"),
+                     inline=False)
+        await ctx.send(embed=em)
+
+    else:
+        if clock_time is not None:
+            try:
+                # Check input is 4 characters long and try to convert to 24h clock time
+                assert(len(clock_time) == 4)
+                time_set = time.strptime(clock_time, "%H%M")
+                notify_date = datetime.datetime(next_date.year, next_date.month,
+                                                next_date.day, time_set.tm_hour,
+                                                time_set.tm_min, 0, 0)
+            except (ValueError, AssertionError) as e:
+                print(traceback.format_exc())
+                # Send error message embed if input is invalid
+                msg = """Invalid time of day given!
+                         It must be a valid 4-digit 24h clock time between 0000-2359."""
+                title = "Error"
+                em = discord.Embed(title=title,
+                                   description=msg,
+                                   color=c_error)
+                return await ctx.send(embed=em)
+        else:
+            notify_date = next_date
+
+        # Add new document for channel and display success message
+        new_doc = {'_id': channel.id, 'notify_date': notify_date}
+        result = await db_table.insert_one(new_doc)
 
         msg = f"""{ctx.message.author} has enabled daily notifications about releases in {channel}.\n
                   To change notification time, type {prefix}set
                   To stop notifications in this channel, type {prefix}stop"""
         title = "Channel Subscribed"
-
-    # If channel found, embed will have error message with next notification date
-    else:
-        notify_date = data['notify_date']
-        msg = f"""To change notification time, type {prefix}set
-                  To stop notifications in this channel, type {prefix}stop"""
-        title = "Found Existing Subscription"
-
-    em = discord.Embed(title=title,
+        em = discord.Embed(title=title,
                        description=msg,
                        color=c_info)
-    em.add_field(name="Next Notification Due",
-                 value=notify_date.strftime("%d %B %Y %H:%M (UTC+0)"),
-                 inline=False)
-    await ctx.send(embed=em)
+        em.add_field(name="Next Notification Due",
+                     value=notify_date.strftime("%d %B %Y %H:%M (UTC+0)"),
+                     inline=False)
+        await ctx.send(embed=em)
 
 
 
@@ -379,7 +389,7 @@ async def remove_from_notify(ctx):
     colour = c_info
     data = await db_table.find_one({'_id': channel.id})
 
-    # If channel in database, remove and set confirmation message
+    # If channel in database, remove and post confirmation message
     if data is not None:
         result = await db_table.delete_one(data)
         msg = f"Daily notifications for {channel} disabled by {ctx.message.author}"
@@ -403,7 +413,7 @@ async def remove_from_notify(ctx):
 @client.command(name='set',
                 help="""Set a new time for notifications in the current channel.
                         The date when notifications are posted will not change.\n
-                        <clock_time> is a 4 digit number which gives the time of day in 24h clock format.
+                        The <clock_time> required argument is a 4 digit number which gives the time of day in 24h clock format.
                         e.g. to set notifications for 6:30 PM, !notify 1830.
                         e.g. to set notifications for 4:15 AM, !notify 0415\n
                         Notification dates are given in UTC+0 timezone format.\n
@@ -414,21 +424,24 @@ async def remove_from_notify(ctx):
 async def set_notify_time(ctx, clock_time):
     channel = ctx.message.channel
     try:
-        # Check input is 4 characters long and try to convert it
-        assert(clock_time is not None)
-        assert(len(clock_time) == 4)
-        time_set = time.strptime(clock_time, "%H%M")
         data = await db_table.find_one({'_id': channel.id})
-        
         if data is not None:
+            # Check input is 4 characters long and convert to 24h clock format
+            # Then use it to get new notification date
+            assert(clock_time is not None)
+            assert(len(clock_time) == 4)
             time_set = time.strptime(clock_time, "%H%M")
             old_date = data['notify_date']
             notify_date = datetime.datetime(old_date.year, old_date.month,
                                             old_date.day, time_set.tm_hour,
                                             time_set.tm_min, 0, 0)
+
+            # Find document for channel and update notification date
             find_query = {'_id': data['_id']}
             update_query = {'$set': {'notify_date': notify_date}}
             result = await db_table.update_one(find_query, update_query)
+
+            # Send success message with new date and time
             msg = f"{ctx.message.author} set a new notification time for {channel}"
             em = discord.Embed(title="New Time Set",
                                description=msg,
@@ -439,6 +452,7 @@ async def set_notify_time(ctx, clock_time):
             await ctx.send(embed=em)
 
         else:
+            # Post error message if no document for channel found
             msg = f"""Channel does not receive notifications!
                       To start notifications type {prefix}notify"""
             em = discord.Embed(title="Error",
@@ -448,6 +462,7 @@ async def set_notify_time(ctx, clock_time):
             
             
     except (ValueError, AssertionError) as e:
+        # Post error message for if invalid clock time given
         print(traceback.format_exc())
         msg = """Invalid time of day given!
                  It must be a valid 4-digit 24h clock time between 0000-2359."""
