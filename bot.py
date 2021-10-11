@@ -409,6 +409,9 @@ async def remove_from_notify(ctx):
 
 
 
+""" Update channel notification time when command is invoked.
+    Requires 24-hour clock time string as input """
+
 
 @client.command(name='set',
                 help="""Set a new time for notifications in the current channel.
@@ -476,7 +479,7 @@ async def set_notify_time(ctx, clock_time):
 
 
 """ Scrape release data from Wikipedia for current date and
-    post notification to subscribed channels."""
+    post notification to any subscribed channels."""
 
 
 @tasks.loop(minutes=5)
@@ -499,11 +502,16 @@ async def check_notifications():
             msg = f"{len(games)} games released\n\n"
             for date, title in games:
                 msg += f"{title}\n"
-            
+
+            # Set new future notification date for each channel
             for row in await data.to_list(length=None):
-                # Set new future notification date for channel and
-                # update database table with new date
-                notify_date = curr_date + datetime.timedelta(hours=24)
+                old_dt = row['notify_date']
+                notify_date = ((curr_date + datetime.timedelta(hours=24))
+                               .replace(hour=old_dt.hour,
+                                        minute=old_dt.minute,
+                                        second=old_dt.second,
+                                        microsecond=0)
+                               )
                 find_query = {'_id': row['_id']}
                 update_query = {'$set': {'notify_date': notify_date}}
                 result = await db_table.update_one(find_query, update_query)
